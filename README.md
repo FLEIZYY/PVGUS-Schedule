@@ -350,4 +350,4 @@ sudo apt-get install fonts-dejavu
 
 **Версия:** 2.0  
 **Дата:** 09.02.2026  
-**Автор обновления:** Claude + FLEIZY
+**Автор обновления:** FLEIZY
