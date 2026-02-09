@@ -59,7 +59,7 @@ async def cmd_help(message: Message):
         "• Включение/выключение уведомлений\n\n"
         
         "Расписание берётся с сайта ПВГУС\n"
-        "https://lk.tolgas.ru/public-schedule/"
+        "https://lk.tolgas.ru/public-schedule/search/"
     )
     
     await message.answer(
@@ -81,7 +81,7 @@ async def menu_info(callback: CallbackQuery):
         "расписание занятий прямо в Telegram.\n\n"
         
         "Расписание берётся с официального сайта университета: "
-        "https://lk.tolgas.ru/public-schedule/"
+        "https://lk.tolgas.ru/public-schedule/search/"
     )
     
     await callback.message.edit_text(

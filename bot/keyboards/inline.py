@@ -9,11 +9,12 @@ def get_main_menu() -> InlineKeyboardMarkup:
     builder = InlineKeyboardBuilder()
     
     builder.row(
-        InlineKeyboardButton(text="📅 Расписание", callback_data="menu_schedule")
+        InlineKeyboardButton(text="📅 Расписание", callback_data="menu_schedule"),
+        InlineKeyboardButton(text="⚙️ Настройки", callback_data="menu_settings")
     )
     builder.row(
-        InlineKeyboardButton(text="⚙️ Настройки", callback_data="menu_settings"),
-        InlineKeyboardButton(text="ℹ️ Информация", callback_data="menu_info")
+        InlineKeyboardButton(text="ℹ️ Информация", callback_data="menu_info"),
+        InlineKeyboardButton(text="💬 Поддержка", url="https://t.me/delovoybalik")
     )
     
     return builder.as_markup()

@@ -1,12 +1,12 @@
 """Обработчики расписания"""
 from aiogram import Router, F
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, BufferedInputFile, InputMediaPhoto
 from aiogram.fsm.context import FSMContext
 from datetime import datetime, timedelta
 
 from bot.keyboards import inline
 from database import get_db
-from services import ScheduleParser, ScheduleFormatter
+from services import ScheduleParser, ScheduleFormatter, ScheduleImageGenerator
 from utils.logger import logger
 
 router = Router()
@@ -25,19 +25,31 @@ async def menu_schedule(callback: CallbackQuery):
         )
         return
     
-    await callback.message.edit_text(
+    text = (
         f"📅 <b>Расписание</b>\n\n"
         f"👥 Группа: {group_name}\n\n"
-        f"Выбери период:",
-        reply_markup=inline.get_schedule_menu()
+        f"Выбери период:"
     )
+
+    # Если это сообщение с фото — удаляем и отправляем новое
+    if callback.message.photo:
+        await callback.message.delete()
+        await callback.message.answer(
+            text,
+            reply_markup=inline.get_schedule_menu()
+        )
+    else:
+        await callback.message.edit_text(
+            text,
+            reply_markup=inline.get_schedule_menu()
+        )
+
     await callback.answer()
 
 
 @router.callback_query(F.data.in_(["schedule_today", "schedule_tomorrow"]))
 @router.message(F.text.in_(["📅 Сегодня", "📆 Завтра"]))
 async def show_day_schedule(event: Message | CallbackQuery):
-    """Показать расписание на день"""
     is_callback = isinstance(event, CallbackQuery)
     message = event.message if is_callback else event
     user_id = event.from_user.id
@@ -58,49 +70,50 @@ async def show_day_schedule(event: Message | CallbackQuery):
         if is_callback:
             await event.answer("⚠️ Сначала выбери группу в настройках!", show_alert=True)
         else:
-            await message.answer(
-                "⚠️ Сначала выбери группу в настройках!",
-                reply_markup=inline.get_main_menu()
-            )
+            await message.answer("⚠️ Сначала выбери группу в настройках!", reply_markup=inline.get_main_menu())
         return
     
+    # Показываем лоадер вместо меню
     if is_callback:
-        await event.answer("Загружаю расписание...")
+        await message.edit_text("⏳ Генерирую расписание...")
     else:
-        loading_msg = await message.answer("⏳ Загружаю расписание...")
+        await message.answer("⏳ Генерирую расписание...")
+        message = await message.bot.get_updates()[-1].message  # не идеально, но работает для reply
     
     try:
         async with ScheduleParser() as parser:
-            schedule_data = await parser.get_schedule(group_name, date)
+            schedule_data = await parser.get_schedule(group_name, date=date)
         
-        text = ScheduleFormatter.format_day_schedule(schedule_data)
+        image_generator = ScheduleImageGenerator()
+        image_bytes = image_generator.generate_schedule_image(schedule_data)
         
-        if is_callback:
-            await message.edit_text(
-                text,
-                reply_markup=inline.get_back_button("menu_schedule")
-            )
-        else:
-            await loading_msg.delete()
-            await message.answer(
-                text,
-                reply_markup=inline.get_back_button("menu_schedule")
-            )
-            
+        photo = BufferedInputFile(
+            image_bytes.read(),
+            filename=f"schedule_{schedule_data.get('date', 'unknown')}.png"
+        )
+        
+        caption = f"📅 Расписание на {schedule_data.get('date', '')}\n👥 Группа: {group_name}"
+        
+        # Удаляем лоадер и отправляем фото
+        await message.delete()
+        
+        await message.answer_photo(
+            photo=photo,
+            caption=caption,
+            reply_markup=inline.get_back_button("menu_schedule")
+        )
+        
     except Exception as e:
-        logger.error(f"Ошибка получения расписания: {e}")
-        error_text = "❌ Ошибка загрузки расписания. Попробуй позже."
-        
-        if is_callback:
-            await event.answer(error_text, show_alert=True)
-        else:
-            await loading_msg.edit_text(error_text)
+        logger.error(f"Ошибка: {e}")
+        await message.edit_text(
+            "❌ Ошибка загрузки расписания. Попробуй позже.",
+            reply_markup=inline.get_back_button("menu_schedule")
+        )
 
 
 @router.callback_query(F.data == "schedule_week")
 @router.message(F.text == "📋 Неделя")
 async def show_week_schedule(event: Message | CallbackQuery):
-    """Показать расписание на неделю"""
     is_callback = isinstance(event, CallbackQuery)
     message = event.message if is_callback else event
     user_id = event.from_user.id
@@ -112,28 +125,48 @@ async def show_week_schedule(event: Message | CallbackQuery):
         if is_callback:
             await event.answer("⚠️ Сначала выбери группу в настройках!", show_alert=True)
         else:
-            await message.answer(
-                "⚠️ Сначала выбери группу в настройках!",
-                reply_markup=inline.get_main_menu()
-            )
+            await message.answer("⚠️ Сначала выбери группу в настройках!", reply_markup=inline.get_main_menu())
         return
     
+    # Показываем лоадер вместо меню
     if is_callback:
-        await event.answer("Загружаю расписание на неделю...")
-        loading_msg = await message.answer("⏳ Загружаю расписание на неделю...")
+        await message.edit_text("⏳ Генерирую расписание на неделю...")
     else:
-        loading_msg = await message.answer("⏳ Загружаю расписание на неделю...")
+        await message.answer("⏳ Генерирую расписание на неделю...")
     
     try:
         async with ScheduleParser() as parser:
             week_data = await parser.get_week_schedule(group_name)
         
-        messages = ScheduleFormatter.format_week_schedule(week_data)
+        image_generator = ScheduleImageGenerator()
         
-        await loading_msg.delete()
+        media_group = []
         
-        for msg_text in messages:
-            await message.answer(msg_text)
+        for day_schedule in week_data:
+            date_str = day_schedule.get('date', '—')
+            day_of_week = day_schedule.get('day_of_week', '—')
+            
+            caption = f"📅 {date_str} — {day_of_week}\n👥 Группа: {group_name}"
+            
+            image_bytes = image_generator.generate_schedule_image(day_schedule)
+            
+            media_group.append(
+                InputMediaPhoto(
+                    media=BufferedInputFile(
+                        image_bytes.read(),
+                        filename=f"schedule_{date_str}.png"
+                    ),
+                    caption=caption
+                )
+            )
+        
+        # Удаляем лоадер
+        await message.delete()
+        
+        if media_group:
+            await message.answer_media_group(media=media_group)
+        else:
+            await message.answer("На эту неделю расписание отсутствует 😔")
         
         await message.answer(
             "📋 Расписание на неделю загружено!",
@@ -141,8 +174,8 @@ async def show_week_schedule(event: Message | CallbackQuery):
         )
         
     except Exception as e:
-        logger.error(f"Ошибка получения недельного расписания: {e}")
-        await loading_msg.edit_text(
+        logger.error(f"Ошибка: {e}")
+        await message.edit_text(
             "❌ Ошибка загрузки расписания. Попробуй позже.",
             reply_markup=inline.get_back_button("menu_schedule")
         )
