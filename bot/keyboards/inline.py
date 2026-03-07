@@ -4,7 +4,7 @@ from aiogram.utils.keyboard import InlineKeyboardBuilder
 from typing import List, Dict
 
 
-def get_main_menu() -> InlineKeyboardMarkup:
+def get_main_menu(user_id: int = 0, admin_ids: List[int] = None) -> InlineKeyboardMarkup:
     """Главное меню"""
     builder = InlineKeyboardBuilder()
     
@@ -17,8 +17,20 @@ def get_main_menu() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="💬 Поддержка", url="https://t.me/delovoybalik")
     )
     
+    # Кнопка появляется ТОЛЬКО у админов
+    if admin_ids and user_id in admin_ids:
+        builder.row(InlineKeyboardButton(text="👑 Админ-панель", callback_data="menu_admin"))
+    
     return builder.as_markup()
 
+def get_admin_menu() -> InlineKeyboardMarkup:
+    """Меню админа"""
+    builder = InlineKeyboardBuilder()
+    builder.row(InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"))
+    builder.row(InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast"))
+    builder.row(InlineKeyboardButton(text="🧹 Очистить кэш", callback_data="admin_clear_cache"))
+    builder.row(InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main"))
+    return builder.as_markup()
 
 def get_schedule_menu() -> InlineKeyboardMarkup:
     """Меню расписания"""
@@ -38,58 +50,43 @@ def get_schedule_menu() -> InlineKeyboardMarkup:
     return builder.as_markup()
 
 
-def get_settings_menu(notifications_enabled: bool = True) -> InlineKeyboardMarkup:
+def get_settings_menu(notifications_enabled: bool = True, role: str = "student") -> InlineKeyboardMarkup:
     """Меню настроек"""
     builder = InlineKeyboardBuilder()
     
     notification_text = "🔕 Выкл. уведомления" if notifications_enabled else "🔔 Вкл. уведомления"
+    target_btn = "👥 Сменить группу" if role == "student" else "👨‍🏫 Сменить преподавателя"
     
-    builder.row(
-        InlineKeyboardButton(text="👥 Сменить группу", callback_data="settings_group")
-    )
-    builder.row(
-        InlineKeyboardButton(text=notification_text, callback_data="settings_notifications")
-    )
-    builder.row(
-        InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main")
-    )
+    builder.row(InlineKeyboardButton(text=target_btn, callback_data="settings_group"))
+    builder.row(InlineKeyboardButton(text=notification_text, callback_data="settings_notifications"))
+    builder.row(InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main"))
     
     return builder.as_markup()
 
 
 def get_groups_keyboard(groups: List[Dict[str, str]], page: int = 0, per_page: int = 5) -> InlineKeyboardMarkup:
-    """
-    Клавиатура со списком групп
-    
-    Args:
-        groups: Список групп
-        page: Номер страницы
-        per_page: Групп на странице
-    """
+    """Клавиатура со списком групп/преподавателей"""
     builder = InlineKeyboardBuilder()
     
     start = page * per_page
     end = start + per_page
     page_groups = groups[start:end]
     
-    for group in page_groups:
+    for i, group in enumerate(page_groups):
+        # Передаем ИНДЕКС элемента (sg:0, sg:1), чтобы обойти лимит Телеграма в 64 байта!
         builder.row(
             InlineKeyboardButton(
                 text=group["name"],
-                callback_data=f"select_group:{group['name']}"
+                callback_data=f"sg:{start + i}"
             )
         )
     
     # Навигация
     nav_buttons = []
     if page > 0:
-        nav_buttons.append(
-            InlineKeyboardButton(text="◀️", callback_data=f"groups_page:{page-1}")
-        )
+        nav_buttons.append(InlineKeyboardButton(text="◀️", callback_data=f"groups_page:{page-1}"))
     if end < len(groups):
-        nav_buttons.append(
-            InlineKeyboardButton(text="▶️", callback_data=f"groups_page:{page+1}")
-        )
+        nav_buttons.append(InlineKeyboardButton(text="▶️", callback_data=f"groups_page:{page+1}"))
     
     if nav_buttons:
         builder.row(*nav_buttons)

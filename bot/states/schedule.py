@@ -10,6 +10,9 @@ class ScheduleStates(StatesGroup):
 
 
 class SettingsStates(StatesGroup):
-    """Состояния для настроек"""
-    changing_group = State()
-    searching_group = State()
+    choosing_role = State()
+    changing_target = State()
+    searching_target = State()
+    search_msg_id = State()
+
+

@@ -32,87 +32,66 @@ class ScheduleParser:
         if self.session:
             await self.session.close()
     
-    async def search_groups(self, query: str = "") -> List[Dict[str, str]]:
-        """
-        Парсит группы из JS-массива на странице поиска.
-        Ищет массив строк, ПРОПУСКАЯ массив чисел.
-        """
+    async def search_targets(self, query: str = "", role: str = "student") -> List[Dict[str, str]]:
+        """Парсит группы или преподавателей в зависимости от роли."""
         try:
-            # Загружаем страницу поиска
             async with self.session.get(self.search_url) as response:
-                if response.status != 200:
-                    logger.error(f"Ошибка доступа к поиску: {response.status}")
-                    return []
-                
+                if response.status != 200: return []
                 html = await response.text()
                 
-                # Ищем ВСЕ вхождения "const groups = [...]"
-                # Используем findall, чтобы найти и мусорный массив, и настоящий
-                pattern = r'const\s+groups\s*=\s*(\[.*?\]);'
+                # Ищем массив groups или teachers
+                target_var = "groups" if role == "student" else "teachers"
+                pattern = rf'const\s+{target_var}\s*=\s*(\[.*?\]);'
                 matches = re.findall(pattern, html, re.DOTALL)
                 
-                all_groups = []
-                found_correct_array = False
-
+                all_targets = []
                 for json_str in matches:
-                    # --- ГЛАВНАЯ ПРОВЕРКА ---
-                    # Если в массиве нет кавычек, это массив чисел [0,1,2...] -> пропускаем
-                    if '"' not in json_str and "'" not in json_str:
-                        continue
-                        
+                    if '"' not in json_str and "'" not in json_str: continue
                     try:
-                        # Парсим найденную строку как JSON
                         raw_list = json.loads(json_str)
-                        
-                        # Дополнительная проверка: первый элемент должен быть строкой
                         if raw_list and isinstance(raw_list[0], str):
-                            # Ура, это тот самый массив! Преобразуем в словарей
                             for name in raw_list:
-                                all_groups.append({
-                                    "id": name,
-                                    "name": name,
-                                    "full_name": name
-                                })
-                            found_correct_array = True
-                            # logger.info(f"Успешно загружен массив из {len(all_groups)} групп")
-                            break # Выходим из цикла, мы нашли то что нужно
-                            
+                                all_targets.append({"id": name, "name": name, "full_name": name})
+                            break
                     except json.JSONDecodeError:
                         continue
-                
-                if not found_correct_array:
-                    logger.warning("Не удалось найти правильный массив групп в JS")
-                    return []
 
-                # Фильтрация по запросу пользователя
                 if query:
                     query = query.upper().strip()
-                    filtered = [g for g in all_groups if query in g["name"].upper()]
-                    logger.info(f"Найдено групп по запросу '{query}': {len(filtered)}")
-                    return filtered
+                    return [g for g in all_targets if query in g["name"].upper()]
                 
-                # Если запроса нет, возвращаем первые 50 (чтобы список не был пустым при открытии меню)
-                # или возвращаем пустой список, если хотите заставить пользователя вводить поиск
-                return all_groups[:50] 
+                return all_targets[:50] 
                 
         except Exception as e:
             logger.error(f"Критическая ошибка поиска: {e}")
             return []
     
-    async def fetch_schedule_html(self, group_name: str, date_from: datetime, date_to: datetime) -> str:
-        """Получение HTML расписания с датами"""
-        params = {
-            "id": group_name,
-            "dateFrom": date_from.strftime("%Y-%m-%d"),
-            "dateTo": date_to.strftime("%Y-%m-%d")
-        }
+    async def fetch_schedule_html(self, target_name: str, date_from: datetime, date_to: datetime, role: str = "student") -> str:
+        """Получение HTML расписания с датами для нужной роли"""
+        endpoint = "teacher" if role == "teacher" else "group"
+        url = f"https://lk.tolgas.ru/public-schedule/{endpoint}"
         
+        if role == "teacher":
+            # Для преподавателей сайт требует другие названия параметров!
+            params = {
+                "name": target_name,
+                "date": date_from.strftime("%Y-%m-%d"),
+                "dateTo": date_to.strftime("%Y-%m-%d")
+            }
+        else:
+            # Для студентов
+            params = {
+                "id": target_name,
+                "dateFrom": date_from.strftime("%Y-%m-%d"),
+                "dateTo": date_to.strftime("%Y-%m-%d")
+            }
+                
         try:
-            async with self.session.get(self.base_url, params=params) as response:
-                response.raise_for_status()
-                return await response.text()
+            async with self.session.get(url, params=params) as response:
+                html = await response.text()
+                return html
         except Exception as e:
-            logger.error(f"Ошибка получения HTML: {e}")
+            logger.error(f"❌ [ПАРСЕР] Ошибка HTTP запроса: {e}")
             raise
     
     def parse_schedule_html(self, html: str) -> List[Dict[str, str]]:
@@ -120,19 +99,17 @@ class ScheduleParser:
         soup = BeautifulSoup(html, "lxml")
         schedule = []
         current_date = None
+        lessons_found = 0
         
         for block in soup.select("div.date-bar, div.lesson-item"):
-            # Если блок - это дата
             if "date-bar" in block.get("class", []):
                 date_span = block.find("span")
-                if date_span:
-                    current_date = date_span.text.strip()
+                if date_span: current_date = date_span.text.strip()
             
-            # Если блок - это пара
             elif "lesson-item" in block.get("class", []):
+                lessons_found += 1
                 try:
                     number_div = block.find("div", class_="lesson-number")
-                    # .contents[0] берет только текст номера пары, игнорируя время внутри div
                     number = number_div.contents[0].strip() if number_div else "0"
                     
                     time_div = block.find("div", class_="lesson-time")
@@ -147,14 +124,25 @@ class ScheduleParser:
                     type_div = block.find("div", class_="lesson-type")
                     type_ = type_div.text.strip() if type_div else ""
                     
-                    teacher = ""
+                    teacher_or_group = ""
                     details_div = block.find("div", class_="lesson-details")
                     if details_div:
+                        # 1. Вариант для студентов (ищем слово "Преподаватель:")
                         details_text = details_div.get_text("\n")
                         for line in details_text.split("\n"):
                             if "Преподаватель:" in line:
-                                teacher = line.replace("Преподаватель:", "").strip()
+                                teacher_or_group = line.replace("Преподаватель:", "").strip()
                                 break
+                                
+                        # 2. Вариант для преподавателей (ищем иконку фа-users)
+                        if not teacher_or_group:
+                            users_icon = details_div.find("i", class_="fa-users")
+                            if users_icon:
+                                # Текст группы идет сразу после иконки
+                                next_node = users_icon.next_sibling
+                                if next_node and isinstance(next_node, str):
+                                    # Убираем пробелы и возможные кавычки
+                                    teacher_or_group = next_node.strip().replace('"', '')
                     
                     schedule.append({
                         "date": current_date,
@@ -162,18 +150,18 @@ class ScheduleParser:
                         "time": time,
                         "name": name,
                         "type": type_,
-                        "teacher": teacher,
+                        "teacher": teacher_or_group, # Теперь здесь будет "БОЗИ24"
                         "room": room
                     })
                 except Exception as e:
-                    logger.error(f"Ошибка парсинга занятия: {e}")
+                    logger.error(f"⚠️ Ошибка парсинга одной пары: {e}")
                     continue
+                    
         return schedule
 
-    # --- Метод для произвольного диапазона ---
-    async def get_custom_schedule(self, group_name: str, date_start: datetime, date_end: datetime) -> List[Dict[str, any]]:
+    async def get_custom_schedule(self, target_name: str, date_start: datetime, date_end: datetime, role: str = "student") -> List[Dict[str, any]]:
         try:
-            html = await self.fetch_schedule_html(group_name, date_start, date_end)
+            html = await self.fetch_schedule_html(target_name, date_start, date_end, role)
             all_lessons = self.parse_schedule_html(html)
             
             schedule_map = {}
@@ -184,8 +172,9 @@ class ScheduleParser:
                 if date_key not in schedule_map:
                     schedule_map[date_key] = {
                         "date": date_key,
-                        "day_of_week": "", # День недели можно вычислить отдельно или оставить пустым
-                        "group_name": group_name,
+                        "day_of_week": "",
+                        "group_name": target_name,
+                        "role": role,  # Добавляем роль в словарь для картинки!
                         "lessons": []
                     }
                 
@@ -203,18 +192,17 @@ class ScheduleParser:
             logger.error(f"Ошибка custom schedule: {e}")
             return []
 
-    # --- Обертки для совместимости ---
-    async def get_schedule(self, group_name: str, date: Optional[datetime] = None) -> Dict[str, any]:
+    async def get_schedule(self, target_name: str, date: Optional[datetime] = None, role: str = "student") -> Dict[str, any]:
         if date is None: date = datetime.now()
-        res = await self.get_custom_schedule(group_name, date, date)
-        return res[0] if res else {"date": date.strftime("%d.%m.%Y"), "lessons": [], "day_of_week": "", "group_name": group_name}
+        res = await self.get_custom_schedule(target_name, date, date, role)
+        return res[0] if res else {"date": date.strftime("%d.%m.%Y"), "lessons": [], "day_of_week": "", "group_name": target_name, "role": role}
 
-    async def get_week_schedule(self, group_name: str, start_date: Optional[datetime] = None) -> List[Dict[str, any]]:
+    async def get_week_schedule(self, target_name: str, start_date: Optional[datetime] = None, role: str = "student") -> List[Dict[str, any]]:
         if start_date is None:
             today = datetime.now()
             start_date = today - timedelta(days=today.weekday())
         end_date = start_date + timedelta(days=6)
-        return await self.get_custom_schedule(group_name, start_date, end_date)
+        return await self.get_custom_schedule(target_name, start_date, end_date, role)
 
     def _get_day_name(self, weekday: int) -> str:
         return ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"][weekday]

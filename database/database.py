@@ -1,7 +1,7 @@
 """Работа с базой данных"""
 import aiosqlite
 from typing import Optional, Dict, Any
-from datetime import datetime
+from datetime import datetime, timedelta
 import json
 from utils.logger import logger
 
@@ -42,6 +42,14 @@ class Database:
                 notifications_enabled INTEGER DEFAULT 1
             )
         """)
+        
+        # ДОБАВЛЯЕМ ЭТОТ БЛОК (безопасное добавление колонки role)
+        try:
+            await self.connection.execute("ALTER TABLE users ADD COLUMN role TEXT DEFAULT 'student'")
+            await self.connection.commit()
+            logger.info("Добавлена колонка role в таблицу users")
+        except:
+            pass
         
         # Таблица кэша расписания
         await self.connection.execute("""
@@ -85,18 +93,26 @@ class Database:
             return row['group_name'] if row else None
             
     async def set_user_group(self, user_id: int, username: str, first_name: str, group_name: str):
-        """Установка группы пользователя"""
+        """Установка группы/преподавателя пользователя (безопасное сохранение)"""
         if not self.connection:
             raise RuntimeError("Нет соединения с БД")
             
-        await self.connection.execute("""
-            INSERT OR REPLACE INTO users 
-            (user_id, username, first_name, group_name)
-            VALUES (?, ?, ?, ?)
-        """, (user_id, username, first_name, group_name))
+        # Пытаемся просто обновить данные, не трогая роль и уведомления
+        cursor = await self.connection.execute("""
+            UPDATE users 
+            SET username = ?, first_name = ?, group_name = ?
+            WHERE user_id = ?
+        """, (username, first_name, group_name, user_id))
         
+        # Если такого пользователя еще нет в базе, тогда создаем нового
+        if cursor.rowcount == 0:
+            await self.connection.execute("""
+                INSERT INTO users (user_id, username, first_name, group_name)
+                VALUES (?, ?, ?, ?)
+            """, (user_id, username, first_name, group_name))
+            
         await self.connection.commit()
-        logger.info(f"Группа {group_name} установлена для пользователя {user_id}")
+        logger.info(f"Выбор '{group_name}' сохранен для пользователя {user_id}")
         
     async def get_notifications_enabled(self, user_id: int) -> bool:
         """Проверка включены ли уведомления"""
@@ -158,18 +174,19 @@ class Database:
         if not self.connection:
             raise RuntimeError("Нет соединения с БД")
             
-        row = await self.connection.fetchrow("""
+        async with self.connection.execute("""
             SELECT data, fetched_at 
             FROM schedule_cache 
             WHERE group_name = ? AND date = ?
-        """, (group_name, date))
+        """, (group_name, date)) as cursor:
+            row = await cursor.fetchone()
         
         if not row:
             return None
             
         age_hours = (datetime.now().timestamp() - row['fetched_at']) / 3600
         
-        # Кэш живёт 12 часов (можно изменить)
+        # Кэш живёт 12 часов
         if age_hours > 12:
             await self.delete_cache_entry(group_name, date)
             return None
@@ -229,6 +246,17 @@ class Database:
         await self.connection.commit()
         
         logger.info(f"Очищено {deleted} старых записей кэша (старше {days} дней)")
+
+    async def get_user_role(self, user_id: int) -> str:
+        if not self.connection: raise RuntimeError("Нет соединения с БД")
+        async with self.connection.execute("SELECT role FROM users WHERE user_id = ?", (user_id,)) as cursor:
+            row = await cursor.fetchone()
+            return row['role'] if row else 'student'
+
+    async def set_user_role(self, user_id: int, role: str):
+        if not self.connection: raise RuntimeError("Нет соединения с БД")
+        await self.connection.execute("UPDATE users SET role = ? WHERE user_id = ?", (role, user_id))
+        await self.connection.commit()
 
 
 # Глобальный экземпляр

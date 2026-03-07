@@ -1,7 +1,7 @@
 from aiogram import Router, F, Bot
 from aiogram.filters import Command
 from aiogram.types import Message, BufferedInputFile
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 from zoneinfo import ZoneInfo
 import asyncio
 
@@ -12,12 +12,9 @@ from config import settings
 
 
 async def send_night_notifications(bot: Bot):
-    """
-    Отправка вечерних уведомлений о расписании на завтра в 19:00 MSK (UTC+4 летом / UTC+3 зимой)
-    """
-    logger.info("Задача вечерних уведомлений запущена (ежедневно в 19:00 MSK)")
+    logger.info("Задача вечерних уведомлений запущена")
 
-    msk_tz = ZoneInfo("Europe/Moscow")
+    msk_tz = timezone(timedelta(hours=4))
 
     while True:
         try:

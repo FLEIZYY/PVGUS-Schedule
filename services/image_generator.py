@@ -144,40 +144,20 @@ class ScheduleImageGenerator:
     
     def _draw_header(self, draw: ImageDraw, schedule: Dict, y: int):
         header_bg = self._hex_to_rgb(self.COLORS['header'])
-        draw.rectangle(
-            [self.PADDING, y, self.WIDTH - self.PADDING, y + 160],
-            fill=header_bg
-        )
+        draw.rectangle([self.PADDING, y, self.WIDTH - self.PADDING, y + 160], fill=header_bg)
         
-        # Убрали "📅 "
         date_text = self._clean_text(schedule.get('date', 'Дата не указана'))
-        draw.text(
-            (self.WIDTH // 2, y + 40),
-            date_text,
-            font=self.fonts['title'],
-            fill=self._hex_to_rgb(self.COLORS['text_primary']),
-            anchor='mm'
-        )
+        draw.text((self.WIDTH // 2, y + 40), date_text, font=self.fonts['title'], fill=self._hex_to_rgb(self.COLORS['text_primary']), anchor='mm')
         
         day_text = self._clean_text(schedule.get('day_of_week', ''))
-        draw.text(
-            (self.WIDTH // 2, y + 80),
-            day_text,
-            font=self.fonts['subtitle'],
-            fill=self._hex_to_rgb(self.COLORS['text_secondary']),
-            anchor='mm'
-        )
+        draw.text((self.WIDTH // 2, y + 80), day_text, font=self.fonts['subtitle'], fill=self._hex_to_rgb(self.COLORS['text_secondary']), anchor='mm')
         
-        # Убрали "👥 " перед словом Группа
-        group_text = f"Группа: {self._clean_text(schedule.get('group_name', 'Не указана'))}"
-        draw.text(
-            (self.WIDTH // 2, y + 120),
-            group_text,
-            font=self.fonts['text'],
-            fill=self._hex_to_rgb(self.COLORS['accent']),
-            anchor='mm'
-        )
-    
+        # ДИНАМИЧЕСКИЙ ТЕКСТ (зависит от переданной роли)
+        role = schedule.get('role', 'student')
+        prefix = "Группа:" if role == "student" else "Преподаватель:"
+        
+        group_text = f"{prefix} {self._clean_text(schedule.get('group_name', 'Не указана'))}"
+        draw.text((self.WIDTH // 2, y + 120), group_text, font=self.fonts['text'], fill=self._hex_to_rgb(self.COLORS['accent']), anchor='mm')    
     def _draw_lesson_card(self, draw: ImageDraw, lesson: Dict, y: int):
         lesson_clean = {k: self._clean_text(v) for k, v in lesson.items()}
         
