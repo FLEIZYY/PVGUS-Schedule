@@ -219,3 +219,9 @@ async def toggle_notifications(callback: CallbackQuery):
     )
     
     await callback.message.edit_text(settings_text, reply_markup=inline.get_settings_menu(new_state))
+
+@router.callback_query(F.data == "back_to_settings")
+async def back_to_settings(callback: CallbackQuery, state: FSMContext):
+    """Возврат в меню настроек"""
+    await state.clear()
+    await menu_settings(callback)
