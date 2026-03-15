@@ -7,6 +7,8 @@ class ScheduleStates(StatesGroup):
     waiting_for_group = State()
     searching_group = State()
     viewing_schedule = State()
+    waiting_for_start_date = State()
+    waiting_for_end_date = State()
 
 
 class SettingsStates(StatesGroup):

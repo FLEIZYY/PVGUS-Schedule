@@ -44,6 +44,9 @@ def get_schedule_menu() -> InlineKeyboardMarkup:
         InlineKeyboardButton(text="Неделя", callback_data="schedule_week")
     )
     builder.row(
+        InlineKeyboardButton(text="📅 Выбрать период", callback_data="schedule_period")
+    )
+    builder.row(
         InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main")
     )
     
