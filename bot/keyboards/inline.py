@@ -27,6 +27,7 @@ def get_admin_menu() -> InlineKeyboardMarkup:
     """Меню админа"""
     builder = InlineKeyboardBuilder()
     builder.row(InlineKeyboardButton(text="📊 Статистика", callback_data="admin_stats"))
+    builder.row(InlineKeyboardButton(text="Детальная статистика", callback_data="admin_stats_detailed"))
     builder.row(InlineKeyboardButton(text="📢 Рассылка", callback_data="admin_broadcast"))
     builder.row(InlineKeyboardButton(text="🧹 Очистить кэш", callback_data="admin_clear_cache"))
     builder.row(InlineKeyboardButton(text="◀️ Назад", callback_data="back_to_main"))

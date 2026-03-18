@@ -1,15 +1,31 @@
 from aiogram import Router, F, Bot
-from aiogram.types import Message, CallbackQuery
+from aiogram.types import Message, CallbackQuery, BufferedInputFile, ContentType
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
+from aiogram.exceptions import TelegramBadRequest
+from contextlib import suppress
 import asyncio
 
 from database import get_db
 from bot.keyboards import inline
 from utils.logger import logger
 from config import settings
+from services.html_renderer import render_stats_html
 
 admin_router = Router()
+
+
+async def send_or_edit(callback: CallbackQuery, text: str, reply_markup):
+    """Отправляет текст либо редактируя сообщение, либо создавая новое"""
+    if callback.message.content_type != ContentType.TEXT:
+        # Если в сообщении нет текста (фото, документ, и т.д.), удалим и отправим новое
+        with suppress(Exception):
+            await callback.message.delete()
+        await callback.message.answer(text, reply_markup=reply_markup)
+    else:
+        # Если есть текст, попробуем отредактировать
+        with suppress(TelegramBadRequest):
+            await callback.message.edit_text(text, reply_markup=reply_markup)
 
 class AdminStates(StatesGroup):
     waiting_for_broadcast = State()
@@ -24,7 +40,7 @@ async def menu_admin(callback: CallbackQuery, state: FSMContext):
     
     await state.clear()
     text = "👑 <b>Админ-панель</b>\n\nВыберите действие:"
-    await callback.message.edit_text(text, reply_markup=inline.get_admin_menu())
+    await send_or_edit(callback, text, inline.get_admin_menu())
 
 @admin_router.callback_query(F.data == "admin_stats")
 async def admin_stats(callback: CallbackQuery):
@@ -46,7 +62,7 @@ async def admin_stats(callback: CallbackQuery):
         f"💾 Записей в кэше: <b>{cache_size}</b>\n"
     )
     
-    await callback.message.edit_text(stats_text, reply_markup=inline.get_back_button("menu_admin"))
+    await send_or_edit(callback, stats_text, inline.get_back_button("menu_admin"))
 
 @admin_router.callback_query(F.data == "admin_clear_cache")
 async def admin_clear_cache(callback: CallbackQuery):
@@ -62,12 +78,22 @@ async def admin_broadcast(callback: CallbackQuery, state: FSMContext):
     """Подготовка к рассылке"""
     if callback.from_user.id not in settings.admin_ids_list: return
     
-    msg = await callback.message.edit_text(
-        "📢 <b>Рассылка</b>\n\n"
-        "Отправьте мне сообщение, которое нужно разослать всем пользователям.\n"
-        "<i>Можно использовать текст, фото, видео или кружочки.</i>",
-        reply_markup=inline.get_back_button("menu_admin")
-    )
+    if callback.message.content_type == ContentType.TEXT:
+        msg = await callback.message.edit_text(
+            "📢 <b>Рассылка</b>\n\n"
+            "Отправьте мне сообщение, которое нужно разослать всем пользователям.\n"
+            "<i>Можно использовать текст, фото, видео или кружочки.</i>",
+            reply_markup=inline.get_back_button("menu_admin")
+        )
+    else:
+        with suppress(Exception):
+            await callback.message.delete()
+        msg = await callback.message.answer(
+            "📢 <b>Рассылка</b>\n\n"
+            "Отправьте мне сообщение, которое нужно разослать всем пользователям.\n"
+            "<i>Можно использовать текст, фото, видео или кружочки.</i>",
+            reply_markup=inline.get_back_button("menu_admin")
+        )
     
     await state.set_state(AdminStates.waiting_for_broadcast)
     await state.update_data(broadcast_msg_id=msg.message_id)
@@ -110,3 +136,60 @@ async def process_broadcast(message: Message, state: FSMContext):
     # УДАЛЯЕМ СООБЩЕНИЕ АДМИНА ТОЛЬКО В САМОМ КОНЦЕ!
     try: await message.delete()
     except: pass
+
+@admin_router.callback_query(F.data == "admin_stats_detailed")
+async def admin_stats_detailed(callback: CallbackQuery):
+    """Детальная статистика с HTML страницей"""
+    if callback.from_user.id not in settings.admin_ids_list:
+        await callback.answer("⛔ У вас нет доступа", show_alert=True)
+        return
+    
+    await send_or_edit(callback, "⏳ Генерирую статистику...", inline.get_back_button("menu_admin"))
+    
+    try:
+        db = get_db()
+        
+        # Получаем общую статистику
+        stats = await db.get_stats()
+        
+        # Получаем всех пользователей
+        all_users = await db.get_all_users()
+        
+        # Преобразуем Row объекты в словари
+        users_list = [
+            {
+                'user_id': u['user_id'],
+                'username': u['username'],
+                'first_name': u['first_name'],
+                'group_name': u['group_name'],
+                'role': u['role']
+            }
+            for u in all_users
+        ]
+        
+        # Генерируем HTML
+        html_bytes = render_stats_html(stats, users_list)
+        
+        # Отправляем как файл
+        file = BufferedInputFile(
+            html_bytes,
+            filename="pvgus_bot_stats.html"
+        )
+        
+        with suppress(Exception):
+            await callback.message.delete()
+        await callback.message.answer_document(
+            file,
+            caption="📊 Детальная статистика ПВГУС Бота\n\n"
+                   "Откройте документ в браузере для полного функционала (поиск, вкладки).",
+            reply_markup=inline.get_back_button("menu_admin")
+        )
+        
+    except Exception as e:
+        logger.error(f"Ошибка при генерации статистики: {e}")
+        with suppress(Exception):
+            await callback.message.delete()
+        await callback.message.answer(
+            "❌ Ошибка генерации статистики. Попробуй позже.",
+            reply_markup=inline.get_back_button("menu_admin")
+        )

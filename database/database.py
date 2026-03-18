@@ -258,6 +258,46 @@ class Database:
         await self.connection.execute("UPDATE users SET role = ? WHERE user_id = ?", (role, user_id))
         await self.connection.commit()
 
+    async def get_all_users(self):
+        """Получить все пользователей с их данными"""
+        if not self.connection:
+            raise RuntimeError("Нет соединения с БД")
+        
+        async with self.connection.execute(
+            "SELECT user_id, username, first_name, group_name, role FROM users ORDER BY user_id DESC"
+        ) as cursor:
+            rows = await cursor.fetchall()
+            return rows if rows else []
+
+    async def get_stats(self):
+        """Получить общую статистику"""
+        if not self.connection:
+            raise RuntimeError("Нет соединения с БД")
+        
+        # Всего пользователей
+        async with self.connection.execute("SELECT COUNT(*) as cnt FROM users") as cursor:
+            total = (await cursor.fetchone())['cnt']
+        
+        # Уникальные группы
+        async with self.connection.execute("SELECT COUNT(DISTINCT group_name) as cnt FROM users WHERE group_name IS NOT NULL") as cursor:
+            total_groups = (await cursor.fetchone())['cnt']
+        
+        # Расчёт по группам
+        async with self.connection.execute("""
+            SELECT group_name, COUNT(*) as user_count 
+            FROM users 
+            WHERE group_name IS NOT NULL 
+            GROUP BY group_name 
+            ORDER BY user_count DESC
+        """) as cursor:
+            group_stats = await cursor.fetchall()
+        
+        return {
+            "total_users": total,
+            "total_groups": total_groups,
+            "group_stats": group_stats
+        }
+
 
 # Глобальный экземпляр
 _db_instance: Optional[Database] = None
