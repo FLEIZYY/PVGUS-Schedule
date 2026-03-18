@@ -290,6 +290,90 @@ async def generate_period_schedule(message: Message, start_date: datetime.date, 
             reply_markup=inline.get_back_button("menu_schedule")
         )
 
+@router.callback_query(F.data == "schedule_today")
+@router.callback_query(F.data == "schedule_tomorrow")
+async def show_schedule_today_tomorrow(callback: CallbackQuery):
+    """Показать расписание на сегодня или завтра"""
+    is_tomorrow = callback.data == "schedule_tomorrow"
+    
+    user_id = callback.from_user.id
+    db = get_db()
+    group_name = await db.get_user_group(user_id)
+    role = await db.get_user_role(user_id)
+    
+    if not group_name:
+        await callback.answer(
+            "⚠️ Сначала выбери группу в настройках!",
+            show_alert=True
+        )
+        return
+    
+    # Определяем дату
+    now = datetime.now(MOSCOW_TZ)
+    target_date = now.date()
+    if is_tomorrow:
+        target_date += timedelta(days=1)
+    
+    date_str = target_date.strftime("%Y-%m-%d")
+    day_display = target_date.strftime("%d.%m.%Y")
+    
+    # Показываем, что загружается
+    await callback.message.edit_text("⏳ Генерирую расписание...")
+    
+    try:
+        # Проверяем кэш
+        schedule_data = await db.get_cached_schedule(group_name, date_str)
+        
+        if not schedule_data:
+            logger.info(f"📦 Кэш пуст. Запускаем парсер для: {group_name}")
+            async with ScheduleParser() as parser:
+                schedule_data = await parser.get_schedule(group_name, date=target_date, role=role)
+            await db.save_schedule_to_cache(group_name, date_str, schedule_data)
+        else:
+            logger.info(f"💾 Данные взяты из кэша для: {group_name}")
+        
+        # Добавляем роль для генератора картинки
+        schedule_data['role'] = role
+        
+        # Генерируем картинку
+        image_generator = ScheduleImageGenerator()
+        image_bytes = image_generator.generate_schedule_image(schedule_data)
+        
+        photo = BufferedInputFile(
+            image_bytes.read(),
+            filename=f"schedule_{date_str}.png"
+        )
+        
+        # Формируем подпись
+        role_title = "Группа" if role == "student" else "Преподаватель"
+        date_label = "Завтра" if is_tomorrow else "Сегодня"
+        caption = f"📅 {date_label} ({day_display})\n👤 {role_title}: {group_name}"
+        
+        # Отправляем картинку (заменяя текстовое сообщение)
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass  # Если не удалось удалить — это OK, просто отправим новое
+        
+        await callback.message.answer_photo(
+            photo=photo,
+            caption=caption,
+            reply_markup=inline.get_back_button("menu_schedule")
+        )
+    
+    except Exception as e:
+        logger.error(f"Ошибка при генерации расписания: {e}")
+        try:
+            await callback.message.delete()
+        except Exception:
+            pass  # Если не удалось удалить — это OK
+        
+        await callback.message.answer(
+            "❌ Ошибка загрузки расписания. Попробуй позже.",
+            reply_markup=inline.get_back_button("menu_schedule")
+        )
+
+
 @router.callback_query(F.data == "schedule_week")
 @router.message(F.text == "📋 Неделя")
 async def show_week_schedule(event: Message | CallbackQuery):
